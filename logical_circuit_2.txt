@@ -1,0 +1,16 @@
+6 15
+H 0 h1
+H 1 h2
+H 4 h3
+Z 0 z1
+CNOT 1 2 g1 
+CNOT 4 5 g2 
+CNOT 0 1 g3 
+CNOT 2 3 g4 
+H 2 h4 
+H 3 h5 
+CNOT 1 2 g5 
+CNOT 3 5 g6 
+Z 3 z2 
+CNOT 4 3 g7 
+CNOT 3 0 g8 

@@ -1,0 +1,5 @@
+5 4
+CNOT 1 2 g1
+CNOT 3 4 g2
+CNOT 2 3 g3
+X 2 g4
