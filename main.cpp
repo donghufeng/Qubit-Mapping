@@ -5,6 +5,9 @@
 #include<cstdio>
 #include<list>
 #include<set>
+#include<random>
+#include<chrono>
+#include<algorithm>
 
 using namespace std;
 
@@ -89,6 +92,13 @@ private:
 
     vector<vector<int>> D;      // nearest neighbor distance
 
+    vector<int> decay;
+
+    double W;
+    double delta1;
+    double delta2;
+
+
     inline bool is_executable(const vector<int> & pi, int g) const {
         if (gates[g].type == "CNOT") {
             int p = pi[gates[g].q1], q = pi[gates[g].q2];
@@ -123,6 +133,46 @@ private:
         return ret;
     }
 
+
+    list<int> get_next_layer(const list<int>& F, const vector<vector<int>> & DAG, const vector<int>& indeg) const {
+        vector<int> tmp_deg = indeg;
+        list<int> ret;
+        for (int x : F) {
+            for (int y : DAG[x]) {
+                tmp_deg[y]--;
+                if (tmp_deg[y] == 0)
+                    ret.push_back(y);
+            }
+        }
+        return ret;
+    }
+
+    list<int> get_extended_set(const list<int>& F, const vector<vector<int>>& DAG, const vector<int>& indeg) const {
+        return get_next_layer(F, DAG, indeg);
+    }
+
+    double H_basic(const list<int>& F, const vector<int>& pi) const {
+        int sum = 0;
+        for (int g : F) {
+            int q1 = gates[g].q1;
+            int q2 = gates[g].q2;
+            sum += D[pi[q1]][pi[q2]];
+        }
+        return sum;
+    }
+
+    double H_look_ahead(const list<int>& F, const list<int>& E, const vector<int>& pi) const {
+        double s1 = H_basic(F, pi) / (double)F.size();
+        double s2 = H_basic(E, pi) / (double)E.size();
+        return s1 + W * s2;
+    }
+
+    double H(const list<int> & F, const list<int>& E, const vector<int>& pi, const pair<int, int> & SWAP, const vector<double>& decay) const {
+        return H_basic(F, pi);
+        return H_look_ahead(F, E, pi);
+        return max(decay[SWAP.first], decay[SWAP.second]) * H_look_ahead(F, E, pi);
+    }
+
 public:
     SABRE(int num_logical, vector<Gate>& gates, int num_physical, vector<vector<int>>& G)
         : num_logical(num_logical), num_physical(num_physical),
@@ -154,6 +204,10 @@ public:
 
     vector<Gate> heuristic_search(vector<int> & pi, const vector<vector<int>>& DAG) {
         vector<Gate> ans;
+        int tot = 0;
+
+        vector<double> decay(pi.size(), 1);
+
         vector<int> indeg(DAG.size(), 0);
         for (int i = 0; i < DAG.size(); ++i)
             for (int j : DAG[i])
@@ -176,13 +230,15 @@ public:
                 for (auto it = F.begin(); it != F.end(); ) {
                     if (is_executable(pi, *it)) {
                         int x = *it;
-                        it = F.erase(it);
                         ans.push_back(gates[x]);
+                        decay[x] += gates[x].type == "CNOT" ? delta2 : delta1;
+
                         for (int y : DAG[x]) {
                             --indeg[y];
                             if (indeg[y] == 0)
                                 F.push_back(y);
                         }
+                        it = F.erase(it);
                     }
                     else 
                         ++it;
@@ -192,7 +248,9 @@ public:
                 auto candidate_SWAPs = obtain_SWAPs(F, pi);
                 auto rpi = get_reverse_pi(pi);
 
-                int min_score = 0x7fffffff;
+                auto E = get_extended_set(F, DAG, indeg);
+
+                double min_score = __DBL_MAX__;
                 pair<int, int> min_SWAP;
                 for (auto SWAP : candidate_SWAPs) {
                     int x = SWAP.first, y = SWAP.second;
@@ -200,7 +258,7 @@ public:
                     
                     auto tmp = pi;
                     swap(tmp[p], tmp[q]);
-                    int score = H(F, DAG, tmp, D, SWAP);
+                    double score = H(F, E, tmp, {p, q}, decay);
                     if (score < min_score) {
                         min_score = score;
                         min_SWAP = SWAP;
@@ -208,11 +266,31 @@ public:
                 }
                 int p = rpi[min_SWAP.first], q = rpi[min_SWAP.second];
                 swap(pi[p], pi[q]);
+                ans.push_back({"SWAP", p, q, "SWAP" + to_string(++tot)});
+                decay[p] += delta2 * 3;
+                decay[q] += delta2 * 3;
             }
         }
-
+        return ans;
     }
 
+    vector<Gate> iter_one_turn(vector<int> & pi) {
+        heuristic_search(pi, this->DAG);
+        return heuristic_search(pi, this->RDAG);
+    }
+
+    pair<vector<int>, vector<Gate>> solve(int iter_num=3) {
+        auto seed = std::chrono::system_clock::now().time_since_epoch().count();
+        vector<int> pi(this->num_physical);
+        for (int i = 0; i < pi.size(); ++i)
+            pi[i] = i;
+        shuffle(pi.begin(), pi.end(), std::default_random_engine(seed));
+
+        for (int t = 0; t < iter_num; ++t)
+            iter_one_turn(pi);
+        auto initial_mapping = pi;
+        return {initial_mapping, heuristic_search(pi, this->DAG)};
+    }
 };
 
 
