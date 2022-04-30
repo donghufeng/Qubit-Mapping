@@ -1,3 +1,5 @@
+#define DEBUG
+
 #include<iostream>
 #include<fstream>
 #include<string>
@@ -163,13 +165,17 @@ private:
 
     double H_look_ahead(const list<int>& F, const list<int>& E, const vector<int>& pi) const {
         double s1 = H_basic(F, pi) / (double)F.size();
-        double s2 = H_basic(E, pi) / (double)E.size();
-        return s1 + W * s2;
+        if (E.size() == 0)
+            return s1;
+        else {
+            double s2 = H_basic(E, pi) / (double)E.size();
+            return s1 + W * s2;
+        }
     }
 
     double H(const list<int> & F, const list<int>& E, const vector<int>& pi, const pair<int, int> & SWAP, const vector<double>& decay) const {
-        return H_basic(F, pi);
-        return H_look_ahead(F, E, pi);
+        // return H_basic(F, pi);
+        // return H_look_ahead(F, E, pi);
         return max(decay[SWAP.first], decay[SWAP.second]) * H_look_ahead(F, E, pi);
     }
 
@@ -177,13 +183,20 @@ public:
     SABRE(int num_logical, vector<Gate>& gates, int num_physical, vector<vector<int>>& G)
         : num_logical(num_logical), num_physical(num_physical),
         gates(gates), G(G) {
+        
+        // get DAG and RDAG of logical circuit
         this->DAG = get_circuit_DAG(num_logical, gates);
-
         this->RDAG = vector<vector<int>> (this->DAG.size());
         for (int x; x < DAG.size(); ++x) {
             for (int y : DAG[x])
                 RDAG[y].push_back(x);
         }
+
+        #ifdef DEBUG
+            show_DAG(DAG, gates);
+            printf("Reverse DAG\n");
+            show_DAG(RDAG, gates);
+        #endif
 
         // get D using Floyd algorithm
         {
@@ -195,17 +208,35 @@ public:
             for (int i = 0; i < n; ++i)
                 for (int j : G[i])
                     D[i][j] = D[j][i] = 1;
-            for (int k = 0; k < n; ++n)
+            for (int k = 0; k < n; ++k)
                 for (int i = 0; i < n; ++i)
                     for (int j = 0; j < n; ++j)
                         D[i][j] = min(D[i][j], D[i][k] + D[k][j]);    
+            
+            #ifdef DEBUG
+                printf("Show D:\n");
+                for (int i = 0; i < n; ++i) {
+                    printf("%d: ", i);
+                    for (int j = 0; j < n; ++j)
+                        printf("%d ", D[i][j]);
+                    printf("\n");
+                }
+            #endif
         }
     }
 
     vector<Gate> heuristic_search(vector<int> & pi, const vector<vector<int>>& DAG) {
+        #ifdef DEBUG
+            printf("Initial Mapping:");
+            for (int i; i < pi.size(); ++i)
+                printf("(%d, %d) ", i, pi[i]);
+            printf("\n");
+        #endif
+
         vector<Gate> ans;
         int tot = 0;
-
+        
+        auto rpi = get_reverse_pi(pi);
         vector<double> decay(pi.size(), 1);
 
         vector<int> indeg(DAG.size(), 0);
@@ -230,8 +261,18 @@ public:
                 for (auto it = F.begin(); it != F.end(); ) {
                     if (is_executable(pi, *it)) {
                         int x = *it;
-                        ans.push_back(gates[x]);
-                        decay[x] += gates[x].type == "CNOT" ? delta2 : delta1;
+                        if (gates[x].type == "CNOT") {
+                            int p = gates[x].q1;
+                            int q = gates[x].q2;
+                            double tmp = max(decay[p], decay[q]);
+                            decay[p] = decay[q] = tmp + delta2;
+                            ans.push_back({"CNOT", pi[p], pi[q], gates[x].tag});
+                        }
+                        else {
+                            int p = gates[x].q1;
+                            decay[p] += delta1;
+                            ans.push_back({gates[x].type, pi[p], -1, gates[x].tag});
+                        }
 
                         for (int y : DAG[x]) {
                             --indeg[y];
@@ -246,9 +287,15 @@ public:
             }
             else {
                 auto candidate_SWAPs = obtain_SWAPs(F, pi);
-                auto rpi = get_reverse_pi(pi);
-
                 auto E = get_extended_set(F, DAG, indeg);
+
+                #ifdef DEBUG
+                    printf("decay: ");
+                    for (int i = 0; i < decay.size(); ++i)
+                        printf("(%d, %lf) ", i, decay[i]);
+                    printf("\n");
+                    printf("SWAPs: \n");
+                #endif
 
                 double min_score = __DBL_MAX__;
                 pair<int, int> min_SWAP;
@@ -263,23 +310,50 @@ public:
                         min_score = score;
                         min_SWAP = SWAP;
                     }
+                    #ifdef DEBUG
+                        printf("(%d, %d, %lf)\n", x, y, score);
+                    #endif
                 }
-                int p = rpi[min_SWAP.first], q = rpi[min_SWAP.second];
+
+                int x = min_SWAP.first, y = min_SWAP.second;
+                int p = rpi[x], q = rpi[y];
                 swap(pi[p], pi[q]);
-                ans.push_back({"SWAP", p, q, "SWAP" + to_string(++tot)});
-                decay[p] += delta2 * 3;
-                decay[q] += delta2 * 3;
+                swap(rpi[x], rpi[y]);
+                ans.push_back({"SWAP", x, y, "SWAP" + to_string(++tot)});
+
+                double tmp = max(decay[p], decay[q]);
+                decay[p] = decay[q] = tmp + delta2 * 3;
             }
         }
+
+        #ifdef DEBUG
+            printf("additional SWAP: %d\n", tot);
+            printf("updated Circuit:\n");
+            for (auto g : ans) {
+                cout << g.type;
+                printf(" %d %d ", g.q1, g.q2);
+                cout << g.tag << endl;
+            }
+        #endif
+
         return ans;
     }
 
-    vector<Gate> iter_one_turn(vector<int> & pi) {
+    void iter_one_turn(vector<int> & pi) {
+        #ifdef DEBUG
+            cout << "Original Circuit\n";
+        #endif
         heuristic_search(pi, this->DAG);
-        return heuristic_search(pi, this->RDAG);
+        #ifdef DEBUG
+            cout << endl;
+            cout << "Reversed Circuit\n";
+        #endif
+        heuristic_search(pi, this->RDAG);
     }
 
-    pair<vector<int>, vector<Gate>> solve(int iter_num=3) {
+    pair<vector<Gate>, pair<vector<int>, vector<int>>> solve(int iter_num, double W, double delta1, double delta2) {
+        this->set_parameters(W, delta1, delta2);
+
         auto seed = std::chrono::system_clock::now().time_since_epoch().count();
         vector<int> pi(this->num_physical);
         for (int i = 0; i < pi.size(); ++i)
@@ -287,20 +361,91 @@ public:
         shuffle(pi.begin(), pi.end(), std::default_random_engine(seed));
 
         for (int t = 0; t < iter_num; ++t)
+        {
+            #ifdef DEBUG
+                printf("\n\n\n");
+                printf("iterate %d:\n", t);
+            #endif
             iter_one_turn(pi);
+        }
         auto initial_mapping = pi;
-        return {initial_mapping, heuristic_search(pi, this->DAG)};
+        return {heuristic_search(pi, this->DAG), {initial_mapping, pi}};
+    }
+
+    inline void set_parameters(double W, double delta1, double delta2) {
+        this->W = W;
+        this->delta1 = delta1;
+        this->delta2 = delta2;
     }
 };
 
+pair<int, vector<vector<int>>> get_physical_graph(string filename) {
+    ifstream fin;
+    fin.open(filename);
+
+    int n, m;
+    fin >> n >> m;
+
+    vector<vector<int>> G(n);
+    while (m--) {
+        int x, y;
+        fin >> x >> y;
+        G[x].push_back(y);
+        G[y].push_back(x);
+    }
+
+    fin.close();
+    return {n, G};
+}
 
 int main() {
-    auto par = get_logical_circuit_from_file("logical_circuit_2.txt");
-    auto n = par.first;
+    string f1 = "logical_circuit.txt";
+    string f2 = "graph_linear.txt";
+
+    double W = 0.2;
+    double d1 = 0.1;
+    double d2 = 0.3;
+
+    auto par = get_logical_circuit_from_file(f1);
+    auto num_logical = par.first;
     auto gates = par.second;
 
-    auto DAG = get_circuit_DAG(n, gates);
-    show_DAG(DAG, gates);
+    auto DAG = get_circuit_DAG(num_logical, gates);
+    // show_DAG(DAG, gates);
+
+    auto tmp = get_physical_graph(f2);
+    int num_physical = tmp.first;
+    auto G = tmp.second;
+
+    auto sol = SABRE(num_logical, gates, num_physical, G);
+
+    {
+        sol.set_parameters(W, d1, d2);
+        vector<int> pi = {0, 1, 2, 3};
+        sol.iter_one_turn(pi);
+    }
+
+    // auto ans = sol.solve(4, 0.2, 0.1, 0.3);
+    // #ifdef DEBUG
+    //     printf("\n\n");
+    //     printf("The Solution is:\n");
+    //     auto gs = ans.first;
+    //     auto pi0 = ans.second.first;
+    //     auto pi1 = ans.second.second;
+    //     printf("Initial Mapping: ");
+    //     for (int i = 0; i < pi0.size(); ++i)
+    //         printf("(%d, %d) ", i, pi0[i]);
+    //     printf("\n");
+    //     for (auto g : gs) {
+    //         cout << g.type;
+    //         printf(" %d %d ", g.q1, g.q2);
+    //         cout << g.tag << endl;
+    //     }
+    //     printf("Final Mapping:   ");
+    //     for (int i = 0; i < pi1.size(); ++i)
+    //         printf("(%d, %d) ", i, pi1[i]);
+    //     printf("\n");
+    // #endif
 
     return 0;
 }
