@@ -14,6 +14,10 @@
 
 using namespace std;
 
+// using time as random seed
+auto seed = std::chrono::system_clock::now().time_since_epoch().count();
+// generate a global random engine
+auto engine = std::default_random_engine(seed);
 
 struct Gate {
     string type;    // gate's type, such as CNOT or X
@@ -469,11 +473,10 @@ public:
         this->set_parameters(W, delta1, delta2);
 
         // generate random initial mapping
-        auto seed = std::chrono::system_clock::now().time_since_epoch().count();
         vector<int> pi(this->num_physical);
         for (int i = 0; i < pi.size(); ++i)
             pi[i] = i;
-        shuffle(pi.begin(), pi.end(), std::default_random_engine(seed));
+        shuffle(pi.begin(), pi.end(), engine);
 
         // iterate to update initial mapping
         for (int t = 0; t < iter_num; ++t)
@@ -620,7 +623,7 @@ public:
 };
 
 int main() {
-    string f1 = "logical_circuit_2.txt";
+    string f1 = "logical_circuit.txt";
     string f2 = "coupling_graph.txt";
 
     double W = 0.5;
@@ -631,7 +634,7 @@ int main() {
     auto num_logical = par.first;
     auto gates = par.second;
 
-    auto DAG = get_circuit_DAG(num_logical, gates);
+    // auto DAG = get_circuit_DAG(num_logical, gates);
     // show_DAG(DAG, gates);
 
     auto tmp = get_physical_graph(f2);
@@ -646,7 +649,7 @@ int main() {
     //     sol.iter_one_turn(pi);
     // }
 
-    auto ans = sol.solve(4, W, delta1, delta2);
+    auto ans = sol.solve(5, W, delta1, delta2);
     #ifdef DEBUG
     {
         printf("\n\n");
@@ -672,13 +675,19 @@ int main() {
 
     #ifdef BENCHMARK
     {
-        auto gs = ans.first;
-        Benchmark bench(gs);
-        double d1 = 1.0;
-        double d2 = 10.0;
-        printf("SWAP number: %d\n", bench.num_SWAP());
-        printf("circuit depth: %d\n", bench.circuit_depth());
-        printf("time delay: %lf\n", bench.time_delay(d1, d2));
+        const int T = 10;
+        for (int t = 0; t < T; ++t) {
+            printf("Solution %d:\n", t);
+            auto ans = sol.solve(5, W, delta1, delta2);
+            auto gs = ans.first;
+            Benchmark bench(gs);
+            double d1 = 1.0;
+            double d2 = 10.0;
+            printf("SWAP number: %d\n", bench.num_SWAP());
+            printf("circuit depth: %d\n", bench.circuit_depth());
+            printf("time delay: %lf\n", bench.time_delay(d1, d2));
+            printf("\n");
+        }
     }
     #endif
 
