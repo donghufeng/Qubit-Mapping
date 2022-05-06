@@ -1,5 +1,5 @@
 // #define DEBUG
-#define BENCHMARK
+// #define BENCHMARK
 
 #include<iostream>
 #include<fstream>
@@ -650,17 +650,17 @@ int main() {
     // }
 
     auto ans = sol.solve(5, W, delta1, delta2);
-    #ifdef DEBUG
-    {
-        printf("\n\n");
-        printf("The Solution is:\n");
+    // #ifdef DEBUG
+    // {
+        // printf("\n\n");
+        // printf("The Solution is:\n");
         auto gs = ans.first;
         auto pi0 = ans.second.first;
         auto pi1 = ans.second.second;
-        printf("Initial Mapping: ");
-        for (int i = 0; i < pi0.size(); ++i)
-            printf("(%d, %d) ", i, pi0[i]);
-        printf("\n");
+        // printf("Initial Mapping: ");
+        // for (int i = 0; i < pi0.size(); ++i)
+        //     printf("(%d, %d) ", i, pi0[i]);
+        // printf("\n");
         for (auto g : gs) {
             cout << g.type;
             printf(" %d %d ", g.q1, g.q2);
@@ -670,8 +670,8 @@ int main() {
         for (int i = 0; i < pi1.size(); ++i)
             printf("(%d, %d) ", i, pi1[i]);
         printf("\n");
-    }
-    #endif
+    // }
+    // #endif
 
     #ifdef BENCHMARK
     {
