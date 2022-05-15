@@ -1,4 +1,5 @@
 from functools import partial
+from locale import currency
 from mindquantum import *
 import numpy as np
 from typing import List
@@ -7,6 +8,8 @@ from mindquantum.utils.type_value_check import _check_int_type, _check_value_sho
 from mindquantum.utils.type_value_check import _check_value_should_between_close_set, _check_input_type
 from mindquantum.algorithm.nisq.qaoa.max_cut_ansatz import _check_graph, _get_graph_act_qubits_num
 from mindquantum.algorithm.nisq.qaoa.max_cut_ansatz import _get_graph_act_qubits
+from mindquantum.algorithm.compiler.dag import DAGCircuit
+from mindquantum.algorithm.compiler.rules.neighbor_canceler import NeighborCancler
 
 
 class Result:
@@ -254,10 +257,106 @@ coupling_graph = [
     [3, 4],
 ]
 
+
+def decompose_swap(circ: List[BasicGate]):
+    out = Circuit()
+    for g in circ:
+        if isinstance(g, SWAPGate):
+            q0 = g.obj_qubits[0]
+            q1 = g.obj_qubits[1]
+            out += X.on(q0, q1)
+            out += X.on(q1, q0)
+            out += X.on(q0, q1)
+        else:
+            out += g
+    return out
+
+
+def decompose_xx(circ: List[Circuit]):
+    out = Circuit()
+    for g in circ:
+        if isinstance(g, XX):
+            q0 = g.obj_qubits[0]
+            q1 = g.obj_qubits[1]
+            out += H.on(q0)
+            out += H.on(q1)
+            out += X.on(q1, q0)
+            out += RZ(g.coeff).on(q1)
+            out += H.on(q0)
+            out += H.on(q1)
+            out += X.on(q1, q0)
+        else:
+            out += g
+    return out
+
+
+from mindquantum.algorithm.compiler.dag.dag import QubitNode, BarrierNode, GateNode
+
+global step
+step = 1
+
+
+def layerize(self):
+    def _layerize(current_node, depth_map):
+        global step
+        print(step)
+        step += 1
+        current_depth = depth_map[current_node]
+        for child in current_node.child.values():
+            if not isinstance(child, QubitNode):
+                if child not in depth_map:
+                    depth_map[child] = current_depth + 1
+                else:
+                    depth_map[child] = max(current_depth + 1, depth_map[child])
+                _layerize(child, depth_map)
+
+    depth_map = {i: 0 for i in self.head_node.values()}
+    for current_node in self.head_node.values():
+        _layerize(current_node, depth_map)
+    layer = [Circuit() for _ in range(len(set(depth_map.values())) - 1)]
+    for k, v in depth_map.items():
+        if v != 0:
+            if not isinstance(k, BarrierNode):
+                layer[v - 1] += k.gate
+    return [c for c in layer if len(c) != 0]
+
+
+def layerize2(self):
+    def _layerize(current_node: GateNode, depth_map):
+        if current_node.father:
+            prev_depth = []
+            for father_node in current_node.father.values():
+                if father_node not in depth_map:
+                    _layerize(father_node, depth_map)
+                prev_depth.append(depth_map[father_node])
+            depth_map[current_node] = max(prev_depth) + 1
+        for child in current_node.child.values():
+            if not isinstance(child, QubitNode):
+                if child not in depth_map:
+                    _layerize(child, depth_map)
+
+    depth_map = {i: 0 for i in self.head_node.values()}
+    for current_node in self.head_node.values():
+        _layerize(current_node, depth_map)
+    layer = [Circuit() for _ in range(len(set(depth_map.values())) - 1)]
+    for k, v in depth_map.items():
+        if v != 0:
+            if not isinstance(k, BarrierNode):
+                layer[v - 1] += k.gate
+    return [c for c in layer if len(c) != 0]
+
+
+DAGCircuit.layerize = layerize2
+
 new_circ, final_mapping = circ_mapping(maxcut.circuit, coupling_graph)
+new_circ = decompose_xx(decompose_swap(new_circ))
 new_h = operator_mapping(maxcut.hamiltonian, final_mapping)
-h = Hamiltonian(-new_h)
-init = np.random.random(len(new_circ.params_name))
-sim = Simulator('projectq', new_circ.n_qubits)
-res = spsa(partial(maxcut_fun, sim=sim, circ=new_circ, ham=h), init, 100, 0.2,
-           0.2)
+c = new_circ
+dc = DAGCircuit(c)
+# NeighborCancler().do(dc)
+depth = dc.depth()
+# h = Hamiltonian(-new_h)
+# init = np.random.random(len(new_circ.params_name))
+# sim = Simulator('projectq', new_circ.n_qubits)
+# res = spsa(partial(maxcut_fun, sim=sim, circ=new_circ, ham=h), init, 100, 0.2,
+#            0.2)
